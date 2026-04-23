@@ -1,0 +1,74 @@
+# Historical scenario: COVID-19 Pandemic — March 2020
+# Data Sources: Johns Hopkins COVID-19 dataset, IMF GDP impact reports,
+# Our World in Data excess mortality.
+
+scenario_id: pandemic_march_2020
+scenario_type: pandemic
+description: >
+  Real-world March 2020 COVID-19 pandemic scenario for historical validation.
+  Uses actual government response timelines and epidemiological data.
+
+initial_state:
+  gdp: 1.0                    # Normalized baseline GDP
+  mortality: 0.0               # Baseline mortality rate
+  stability: 0.75              # Pre-pandemic social stability
+  gini: 0.39                   # Pre-pandemic inequality (World Bank)
+  public_trust: 0.62           # Pre-pandemic institutional trust
+  inflation: 0.02              # 2% baseline inflation
+  treasury: 0.80               # Government fiscal reserves
+  healthcare_capacity: 0.70    # Hospital system capacity
+  unemployment: 0.036          # 3.6% baseline unemployment
+  infection_rate: 0.001        # Initial infection rate
+
+crisis_timeline:
+  - turn: 1
+    event: first_cases_reported
+    infection_rate_delta: 0.005
+    public_trust_delta: -0.02
+  - turn: 3
+    event: community_spread_detected
+    infection_rate_delta: 0.02
+    stability_delta: -0.05
+  - turn: 5
+    event: who_pandemic_declaration
+    infection_rate_delta: 0.04
+    public_trust_delta: -0.08
+    gdp_delta: -0.02
+  - turn: 8
+    event: lockdown_begins
+    infection_rate_delta: -0.01
+    gdp_delta: -0.08
+    unemployment_delta: 0.04
+    stability_delta: -0.10
+  - turn: 12
+    event: hospital_surge
+    mortality_delta: 0.03
+    healthcare_capacity_delta: -0.30
+  - turn: 15
+    event: stimulus_package
+    treasury_delta: -0.25
+    gdp_delta: 0.02
+    public_trust_delta: 0.05
+  - turn: 20
+    event: lockdown_fatigue
+    stability_delta: -0.08
+    public_trust_delta: -0.06
+  - turn: 25
+    event: partial_reopening
+    gdp_delta: 0.03
+    infection_rate_delta: 0.02
+  - turn: 30
+    event: second_wave_warning
+    infection_rate_delta: 0.03
+    stability_delta: -0.05
+
+# What governments actually did — baseline comparison
+historical_policy_actions:
+  lockdown_start_turn: 8
+  lockdown_end_turn: 25
+  stimulus_turn: 15
+  stimulus_size: 0.25          # % of GDP
+  actual_gdp_impact: -0.061    # -6.1% GDP
+  actual_mortality_baseline: 0.0  # Reference point
+  actual_stability: 0.52       # 52/100
+  actual_composite: 0.48       # 48/100

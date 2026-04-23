@@ -1,0 +1,21 @@
+# All reward signal values — single source of truth
+# Do NOT hardcode these values in rewards.py — read from this file
+signals:
+  mortality_reduction:  { value: 3.0,  delay: 14, layer: role }
+  gdp_performance:      { value: 2.0,  delay: 10, layer: role }
+  crisis_resolution:    { value: 8.0,  delay: 0,  layer: role }
+  inter_agent_trust:    { value: 1.0,  delay: 5,  layer: social }
+  coalition_stability:  { value: 0.5,  delay: 0,  layer: social }
+  influence_gain:       { value: 0.5,  delay: 0,  layer: strategic }
+  survival_bonus:       { value: 5.0,  delay: 0,  layer: strategic }
+  hidden_goal:          { value: 2.0,  delay: 14, layer: private }
+  auditor_catch:        { value: 1.0,  delay: 0,  layer: oversight }
+  auditor_inference:    { value: 1.5,  delay: 0,  layer: oversight }
+  coalition_betrayal:   { value: -1.5, delay: 8,  layer: penalty }
+  fiscal_deficit:       { value: -1.0, delay: 8,  layer: penalty }
+  societal_collapse:    { value: -100.0, delay: 0, layer: penalty }
+
+clip_min: -10.0
+clip_max: 10.0
+hidden_role_weight: 0.70
+hidden_goal_weight: 0.30

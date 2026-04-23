@@ -1,0 +1,19 @@
+# Main runtime configuration
+scenario: pandemic           # 'pandemic' | 'economic' | 'disaster'
+num_agents: 6
+episode_mode: TRAINING       # 'TRAINING' | 'DEMO' | 'STRESS_TEST'
+max_steps:
+  TRAINING: 30
+  DEMO: 200
+  STRESS_TEST: 500
+num_episodes: 500
+demo_mode: false             # true = sleep(0.5) per step, LLM headlines
+reward_clip: 10.0
+promotion_threshold: 0.70
+promotion_window: 20
+initial_tier: 1
+memory_backend: json         # 'json'
+memory_path: ./data/memory.json
+api_host: 0.0.0.0
+api_port: 5000
+log_level: INFO
