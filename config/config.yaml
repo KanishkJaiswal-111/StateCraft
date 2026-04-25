@@ -29,3 +29,22 @@ ppo_hyperparameters:
   clip_range: 0.2
   ent_coef: 0.01
 
+# Optional RL role controller settings.
+# When enabled, shallow-DL policy controls the selected RL agents.
+rl_agents:
+  use_shallow_dl: true
+  agent_ids: [agent_0, agent_2, agent_3, agent_4]
+  hidden_dim: 64
+  device: cpu
+  policy_paths: {}
+
+# Optional external LLM socket routing.
+# Default split: 2 socket-driven agents (adversarial/political + auditor),
+# and 4 shallow-DL RL-controlled agents.
+llm_socket_agents:
+  enabled: true
+  agent_ids: [agent_1, agent_5]
+  socket_url: ws://localhost:8001/agents
+  timeout_seconds: 1.5
+  api_key: null
+

@@ -23,6 +23,8 @@ from agents.central_bank import CentralBankAgent
 from agents.political import PoliticalAgent
 from agents.auditor import AuditorAgent
 from agents.crisis_generator_agent import CrisisGeneratorAgent
+from agents.rl_shallow import RLShallowAgent
+from agents.llm_socket import LLMSocketAgent
 from core.trust import TrustSystem
 from core.negotiation import NegotiationSystem
 from core.aggregation import aggregate_actions
@@ -79,8 +81,9 @@ def check_metric_constraints(episode, metrics_history, baseline_metrics) -> list
 
 
 
-def create_agents(memory_store=None) -> dict:
+def create_agents(memory_store=None, config: dict = None) -> dict:
     """Create the 6 canonical agents."""
+    config = config or {}
     agents = {
         'agent_0': FinanceMinisterAgent('agent_0'),
         'agent_1': PoliticalAgent('agent_1'),
@@ -89,6 +92,43 @@ def create_agents(memory_store=None) -> dict:
         'agent_4': MilitaryAgent('agent_4'),
         'agent_5': AuditorAgent('agent_5'),
     }
+
+    # Optional: wrap RL-controlled roles with a shallow DL policy.
+    # By default these are the 4 non-auditor, non-adversarial agents.
+    rl_cfg = config.get('rl_agents', {})
+    if rl_cfg.get('use_shallow_dl', False):
+        rl_ids = rl_cfg.get('agent_ids', ['agent_0', 'agent_2', 'agent_3', 'agent_4'])
+        hidden_dim = int(rl_cfg.get('hidden_dim', 64))
+        device = rl_cfg.get('device', 'cpu')
+        policy_paths = rl_cfg.get('policy_paths', {})
+        for agent_id in rl_ids:
+            if agent_id in agents:
+                agents[agent_id] = RLShallowAgent(
+                    agent_id=agent_id,
+                    role_agent=agents[agent_id],
+                    policy_path=policy_paths.get(agent_id),
+                    hidden_dim=hidden_dim,
+                    device=device,
+                )
+
+    # Optional: route selected agents via external LLM socket.
+    # Default targets: adversarial role (agent_1) and auditor (agent_5).
+    llm_cfg = config.get('llm_socket_agents', {})
+    if llm_cfg.get('enabled', False):
+        llm_ids = llm_cfg.get('agent_ids', ['agent_1', 'agent_5'])
+        socket_url = llm_cfg.get('socket_url', 'ws://localhost:8001/agents')
+        timeout_seconds = float(llm_cfg.get('timeout_seconds', 1.5))
+        api_key = llm_cfg.get('api_key')
+        for agent_id in llm_ids:
+            if agent_id in agents:
+                agents[agent_id] = LLMSocketAgent(
+                    agent_id=agent_id,
+                    role_agent=agents[agent_id],
+                    socket_url=socket_url,
+                    timeout_seconds=timeout_seconds,
+                    api_key=api_key,
+                )
+
     # Load cross-episode memory
     if memory_store:
         for agent in agents.values():
@@ -149,7 +189,7 @@ def run_training_loop(config: dict = None):
     counterfactual = CounterfactualAuditor(env)
 
     # Create agents
-    AGENTS = create_agents(memory_store)
+    AGENTS = create_agents(memory_store, config=config)
     AGENT_IDS = list(AGENTS.keys())
 
     print("=" * 70)
