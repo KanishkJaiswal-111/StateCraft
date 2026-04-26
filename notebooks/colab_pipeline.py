@@ -1,7 +1,4 @@
 import os, sys, json, random, subprocess, threading, asyncio, shutil
-import numpy as np
-import pandas as pd
-import torch
 
 try:
     from google.colab import drive
@@ -44,6 +41,10 @@ for mod_name in list(sys.modules.keys()):
 
 # Install dependencies
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt", "openai>=1.0.0"], check=True)
+
+import numpy as np
+import pandas as pd
+import torch
 
 print("CUDA available:", torch.cuda.is_available())
 if torch.cuda.is_available():
