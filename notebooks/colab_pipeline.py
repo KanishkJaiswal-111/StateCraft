@@ -48,7 +48,7 @@ for mod_name in list(sys.modules.keys()):
         del sys.modules[mod_name]
 
 subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt",
+    [sys.executable, "-m", "pip", "install", "-r", "requirements.txt",
      "openai>=1.0.0", "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
      "unsloth-zoo"],
     check=True
