@@ -161,6 +161,15 @@ class GRPOPipeline:
             from unsloth import FastLanguageModel, is_bfloat16_supported
             from trl import GRPOConfig, GRPOTrainer
             
+            # Fix Unsloth FP8BackendType bug
+            try:
+                import unsloth.models._utils
+                if not hasattr(unsloth.models._utils, "FP8BackendType"):
+                    class DummyFP8: pass
+                    unsloth.models._utils.FP8BackendType = DummyFP8
+            except Exception:
+                pass
+
             # Fix Unsloth/TRL _get_train_sampler bug
             if hasattr(GRPOTrainer, "_get_train_sampler"):
                 old_sampler = getattr(GRPOTrainer, "_get_train_sampler")
