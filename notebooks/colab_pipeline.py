@@ -1,5 +1,4 @@
 import os, sys, json, random, subprocess, threading, shutil, time
-import unsloth  # MUST be first import for correct Unsloth patching
 import torch
 
 # =========================
@@ -49,13 +48,16 @@ for mod_name in list(sys.modules.keys()):
         del sys.modules[mod_name]
 
 subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-q", "-r",
-     "requirements.txt", "openai>=1.0.0"],
+    [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt",
+     "openai>=1.0.0", "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
+     "unsloth-zoo"],
     check=True
 )
 
 import numpy as np
 import pandas as pd
+
+import unsloth  # Import unsloth AFTER pip install so it gets the correct version
 
 torch.set_float32_matmul_precision("high")  # prevents torch.compile warnings
 
