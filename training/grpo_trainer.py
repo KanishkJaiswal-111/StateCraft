@@ -147,6 +147,17 @@ class GRPOPipeline:
         self.tokenizer = None
         self.trl_available = False
         try:
+            import transformers
+            old_to_dict = transformers.PretrainedConfig.to_dict
+            def new_to_dict(self, *args, **kwargs):
+                d = old_to_dict(self, *args, **kwargs)
+                td = getattr(self, "torch_dtype", None)
+                if td is None:
+                    td = getattr(self, "dtype", "float16")
+                d["torch_dtype"] = str(td).split(".")[-1]
+                return d
+            transformers.PretrainedConfig.to_dict = new_to_dict
+
             from unsloth import FastLanguageModel, is_bfloat16_supported
             from trl import GRPOConfig, GRPOTrainer
             self.trl_available = True
