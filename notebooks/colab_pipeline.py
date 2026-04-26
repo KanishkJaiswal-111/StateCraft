@@ -235,7 +235,7 @@ with open(os.path.join(AUD_OUT_DIR, "auditor_classifier_report.json"), "w", enco
 # =========================
 from openai import OpenAI
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_API_KEY = "OPENAI_API_KEY"
 if not OPENAI_API_KEY:
     print("WARNING: OPENAI_API_KEY not set. Skipping LLM socket training.")
     llm_metrics = {"status": "skipped", "reason": "no api key"}
