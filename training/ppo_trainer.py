@@ -196,7 +196,8 @@ class PPOTrainer:
                 self.wandb.log({k: v for k, v in log.items() if v is not None})
 
             if episode % 10 == 0:
-                cs = f"{causal_score:.3f}" if causal_score is not None else "N/A"
+                c_val = metrics.get("causal_score")
+                cs = f"{c_val:.3f}" if c_val is not None else "N/A"
                 print(f"Ep {episode:4d} | reward={ep_reward:6.2f} | "
                       f"society={metrics.get('society_score',0):.1f} | causal={cs} | "
                       f"auditor={metrics.get('auditor_accuracy',0):.2f} | loss={loss:.4f}")
