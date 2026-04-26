@@ -161,14 +161,15 @@ class GRPOPipeline:
             from unsloth import FastLanguageModel, is_bfloat16_supported
             from trl import GRPOConfig, GRPOTrainer
             
-            # Fix Unsloth FP8BackendType bug
+            # Fix Unsloth FP8BackendType bug (catch all missing vLLM attributes)
             try:
                 import unsloth.models._utils
                 if not hasattr(unsloth.models._utils, "FP8BackendType"):
-                    import enum
-                    class DummyFP8(enum.Enum):
-                        TE = "TE"
-                        TRITON = "TRITON"
+                    class DummyMeta(type):
+                        def __getattr__(cls, name):
+                            return name
+                    class DummyFP8(metaclass=DummyMeta):
+                        pass
                     unsloth.models._utils.FP8BackendType = DummyFP8
             except Exception:
                 pass
