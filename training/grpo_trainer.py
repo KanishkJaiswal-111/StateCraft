@@ -165,7 +165,10 @@ class GRPOPipeline:
             try:
                 import unsloth.models._utils
                 if not hasattr(unsloth.models._utils, "FP8BackendType"):
-                    class DummyFP8: pass
+                    import enum
+                    class DummyFP8(enum.Enum):
+                        TE = "TE"
+                        TRITON = "TRITON"
                     unsloth.models._utils.FP8BackendType = DummyFP8
             except Exception:
                 pass
