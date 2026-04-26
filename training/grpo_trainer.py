@@ -147,8 +147,8 @@ class GRPOPipeline:
         self.tokenizer = None
         self.trl_available = False
         try:
-            from trl import GRPOConfig, GRPOTrainer
             from unsloth import FastLanguageModel, is_bfloat16_supported
+            from trl import GRPOConfig, GRPOTrainer
             self.trl_available = True
             self._GRPOConfig = GRPOConfig
             self._GRPOTrainer = GRPOTrainer
@@ -233,8 +233,11 @@ class GRPOPipeline:
         training_args = self._GRPOConfig(
             output_dir=os.path.join(self.checkpoint_dir, "trl_output"),
             learning_rate=2e-5,
-            per_device_train_batch_size=4,
+            fp16=not self._is_bf16(),
+            bf16=self._is_bf16(),
+            per_device_train_batch_size=1,
             gradient_accumulation_steps=4,
+            num_generations=4,
             max_prompt_length=256,
             max_completion_length=128,
             num_train_epochs=1,
