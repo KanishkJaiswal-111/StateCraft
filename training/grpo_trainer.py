@@ -160,6 +160,18 @@ class GRPOPipeline:
 
             from unsloth import FastLanguageModel, is_bfloat16_supported
             from trl import GRPOConfig, GRPOTrainer
+            
+            # Fix Unsloth/TRL _get_train_sampler bug
+            if hasattr(GRPOTrainer, "_get_train_sampler"):
+                old_sampler = getattr(GRPOTrainer, "_get_train_sampler")
+                def new_sampler(self, *args, **kwargs):
+                    import inspect
+                    sig = inspect.signature(old_sampler)
+                    if len(sig.parameters) == 1:
+                        return old_sampler(self)
+                    return old_sampler(self, *args, **kwargs)
+                setattr(GRPOTrainer, "_get_train_sampler", new_sampler)
+
             self.trl_available = True
             self._GRPOConfig = GRPOConfig
             self._GRPOTrainer = GRPOTrainer
