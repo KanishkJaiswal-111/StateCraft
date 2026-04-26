@@ -186,11 +186,10 @@ class GRPOPipeline:
 
     def _environment_reward_func(self, completions, **kwargs):
         """Reward function: parse LLM output → step env → return reward."""
-        prompts = kwargs.get("prompt", [])
         rewards = []
         env = CrisisGovernanceEnv(config=self.config)
 
-        for prompt, completion in zip(prompts, completions):
+        for completion in completions:
             text = completion[0]['content'] if isinstance(completion, list) else str(completion)
             try:
                 action_array = parse_llm_action(text)
