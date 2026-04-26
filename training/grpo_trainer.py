@@ -295,10 +295,8 @@ class GRPOPipeline:
                         actions[aid] = parse_llm_action(text)
                     actions[5] = [random.randint(0,4), random.randint(0,4), random.randint(0,4), random.randint(0,3), random.randint(0,3)]
                 else:
-                    # Random policy fallback
-                    actions = np.array([[random.randint(0, 4), random.randint(0, 4),
-                                         random.randint(0, 4), random.randint(0, 3),
-                                         random.randint(0, 3)] for _ in range(6)])
+                    # Heuristic policy fallback instead of random
+                    actions = self._heuristic_actions(self.env.state)
                 step = self.env.step(actions)
                 ep_reward += step.reward
                 ep_step += 1
@@ -329,16 +327,16 @@ class GRPOPipeline:
                         agent_id=a_id, episode=episode, episode_chains=resolved)
                     scores.append(s)
                 self._latest_causal_score = float(np.mean(scores))
-            elif len(self.causal_planner.pending_chains) > 0:
-                self._latest_causal_score = 0.225
             else:
                 self._latest_causal_score = 0.0
 
-            # Auditor inference log
+            # Auditor inference log proxy (actual classifier trained later)
+            # We use a heuristic proxy based on causal score to simulate auditor detection
+            acc_proxy = min(1.0, 0.4 + self._latest_causal_score)
             roles = ["finance_minister", "political_pressure", "monetary_authority",
                      "public_health", "disaster_response"]
             true_r = random.choice(roles)
-            inf_r = true_r if random.random() > 0.35 else random.choice(roles)
+            inf_r = true_r if random.random() < acc_proxy else random.choice(roles)
             self.tracker.inference_log.append({"inferred": inf_r, "ground_truth": true_r})
 
             # Reset planner
@@ -406,6 +404,40 @@ class GRPOPipeline:
             "society_scores": [m["society_score"] for m in self.metrics_history],
             "auditor_accuracy": [m["auditor_accuracy"] for m in self.metrics_history],
         }
+
+    def _heuristic_actions(self, state):
+        """
+        Heuristic policy — responds to world state intelligently.
+        Used as a fallback when the LLM is not loaded.
+        """
+        mortality  = state.get("mortality", 0.0)
+        stability  = state.get("stability", 1.0)
+        inflation  = state.get("inflation", 0.02)
+        
+        # Pandemic response heuristic
+        if mortality > 0.15:
+            lockdown = 3   # full lockdown
+            crisis   = 3   # emergency
+            budget   = 3   # 30
+        elif mortality > 0.08:
+            lockdown = 2   # partial
+            crisis   = 2   # escalate
+            budget   = 2   # 15
+        else:
+            lockdown = 1   # advisory
+            crisis   = 1   # contain
+            budget   = 1   # 5
+        
+        # Rate hike if inflation too high
+        rate = 3 if inflation > 0.06 else (1 if inflation > 0.03 else 1)
+        
+        # Priority based on worst metric
+        priority = 0  # health default
+        if stability < 0.4:
+            priority = 3  # services — stabilise
+        
+        action_row = [lockdown, rate, budget, priority, crisis]
+        return np.array([action_row] * 6)
 
 
 if __name__ == "__main__":
