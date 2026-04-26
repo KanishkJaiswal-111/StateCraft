@@ -37,12 +37,12 @@ subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
 
 os.chdir(REPO_DIR)
 
-# Purge any cached modules from previous runs in this Python session
+# Purge any cached modules from previous runs
 for mod_name in list(sys.modules.keys()):
     if mod_name.startswith(("training", "openenv", "metrics", "causal", "auditor", "env", "core", "agents")):
         del sys.modules[mod_name]
 
-# Install project dependencies
+# Install dependencies
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt", "openai>=1.0.0"], check=True)
 
 print("CUDA available:", torch.cuda.is_available())
@@ -65,36 +65,16 @@ history = pipeline.train_grpo(num_episodes=GRPO_EPISODES)
 # =========================
 # 2) GENERALIZATION EVAL
 # =========================
-# Generalization uses the lightweight PPO policy network as a fast evaluator.
-# The PPO policy can be trained separately or loaded from a checkpoint.
 from eval.generalization import run_generalization_test
-from training.ppo_policy import CrisisActorCritic
 
-# Train a quick PPO policy for generalization evaluation
-from training.ppo_trainer import PPOTrainer
-ppo_ckpt_dir = os.path.join(RUN_ROOT, "ppo_checkpoints")
-os.makedirs(ppo_ckpt_dir, exist_ok=True)
-
-ppo = PPOTrainer(
-    config={"scenario": "pandemic", "num_episodes": 200},
-    use_wandb=False,
-    checkpoint_dir=ppo_ckpt_dir
-)
-ppo.train(num_episodes=200)
-
-final_ckpt = os.path.join(ppo_ckpt_dir, "policy_final.pt")
-if os.path.exists(final_ckpt):
-    gen_results = run_generalization_test(final_ckpt)
-    with open(os.path.join(RUN_ROOT, "generalization_results.json"), "w", encoding="utf-8") as f:
-        json.dump(gen_results, f, indent=2)
-else:
-    gen_results = {"status": "skipped", "reason": "no checkpoint"}
+gen_results = run_generalization_test()
+with open(os.path.join(RUN_ROOT, "generalization_results.json"), "w", encoding="utf-8") as f:
+    json.dump(gen_results, f, indent=2)
 
 # =========================
-# 3) AUDITOR CLASSIFIER (RL-based inference)
+# 3) AUDITOR CLASSIFIER (env-rollout-based inference)
 # =========================
-from openenv.wrapper import CrisisGovernanceEnv
-from training.ppo_policy import CrisisActorCritic, AGENT_ID_TO_ROLE_IDX
+from openenv.wrapper import CrisisGovernanceEnv, AGENT_IDS
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
@@ -114,13 +94,6 @@ PRIORITY_MAP = {"health":0, "infrastructure":1, "military":2, "services":3}
 FOREIGN_MAP = {"isolate":0, "neutral":1, "engage":2, "alliance":3}
 CRISIS_MAP = {"monitor":0, "contain":1, "escalate":2, "emergency":3}
 
-def load_policy(path):
-    model = CrisisActorCritic()
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
-    model.load_state_dict(ckpt["policy_state_dict"])
-    model.eval()
-    return model
-
 def encode_action(a):
     return np.array([
         LOCKDOWN_MAP.get(a.get("lockdown_level","none"), 0) / 4.0,
@@ -131,12 +104,12 @@ def encode_action(a):
         CRISIS_MAP.get(a.get("crisis_response","monitor"), 0) / 3.0,
     ], dtype=np.float32)
 
-def collect_dataset(policy, scenarios=("pandemic","economic","disaster"), episodes_per_scenario=120, seq_len=10, seed=42):
+def collect_dataset(scenarios=("pandemic","economic","disaster"), episodes_per_scenario=120, seq_len=10, seed=42):
+    """Collect auditor training data using environment rollouts with random policy."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    role_ids = torch.LongTensor(list(AGENT_ID_TO_ROLE_IDX.values()))
     X, y = [], []
 
     for scenario in scenarios:
@@ -149,11 +122,11 @@ def collect_dataset(policy, scenarios=("pandemic","economic","disaster"), episod
             seq_buffers = {aid: [] for aid in range(5)}
 
             while not done:
-                obs_t = torch.FloatTensor(obs)
-                with torch.no_grad():
-                    actions, _, _, _ = policy.get_action_and_value(obs_t, role_ids)
-
-                sr = env.step(actions.numpy())
+                # Random policy rollout
+                actions = np.array([[random.randint(0, 4), random.randint(0, 4),
+                                     random.randint(0, 4), random.randint(0, 3),
+                                     random.randint(0, 3)] for _ in range(6)])
+                sr = env.step(actions)
                 actions_dict = sr.info.get("actions_dict", {})
 
                 for aid in range(5):
@@ -178,47 +151,42 @@ def collect_dataset(policy, scenarios=("pandemic","economic","disaster"), episod
 
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64)
 
-if os.path.exists(final_ckpt):
-    policy = load_policy(final_ckpt)
-    X, y = collect_dataset(policy, episodes_per_scenario=AUD_EPISODES_PER_SCENARIO, seq_len=10, seed=7)
+X, y = collect_dataset(episodes_per_scenario=AUD_EPISODES_PER_SCENARIO, seq_len=10, seed=7)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
-    clf = RandomForestClassifier(
-        n_estimators=700,
-        max_depth=None,
-        class_weight="balanced_subsample",
-        random_state=42,
-        n_jobs=-1
-    )
-    clf.fit(X_train, y_train)
-    pred = clf.predict(X_test)
+clf = RandomForestClassifier(
+    n_estimators=700,
+    max_depth=None,
+    class_weight="balanced_subsample",
+    random_state=42,
+    n_jobs=-1
+)
+clf.fit(X_train, y_train)
+pred = clf.predict(X_test)
 
-    aud_acc = float(accuracy_score(y_test, pred))
-    aud_cm = confusion_matrix(y_test, pred, labels=[0,1,2,3,4])
-    aud_report = classification_report(
-        y_test, pred,
-        labels=[0,1,2,3,4],
-        target_names=CLASS_NAMES,
-        output_dict=True,
-        zero_division=0
-    )
+aud_acc = float(accuracy_score(y_test, pred))
+aud_cm = confusion_matrix(y_test, pred, labels=[0,1,2,3,4])
+aud_report = classification_report(
+    y_test, pred,
+    labels=[0,1,2,3,4],
+    target_names=CLASS_NAMES,
+    output_dict=True,
+    zero_division=0
+)
 
-    aud_out = {
-        "overall_accuracy": aud_acc,
-        "class_names": CLASS_NAMES,
-        "confusion_matrix": aud_cm.tolist(),
-        "classification_report": aud_report,
-        "n_train": int(len(y_train)),
-        "n_test": int(len(y_test))
-    }
-    with open(os.path.join(AUD_OUT_DIR, "auditor_classifier_report.json"), "w", encoding="utf-8") as f:
-        json.dump(aud_out, f, indent=2)
-else:
-    aud_acc = 0.0
-    print("Skipping auditor classifier — no PPO checkpoint available.")
+aud_out = {
+    "overall_accuracy": aud_acc,
+    "class_names": CLASS_NAMES,
+    "confusion_matrix": aud_cm.tolist(),
+    "classification_report": aud_report,
+    "n_train": int(len(y_train)),
+    "n_test": int(len(y_test))
+}
+with open(os.path.join(AUD_OUT_DIR, "auditor_classifier_report.json"), "w", encoding="utf-8") as f:
+    json.dump(aud_out, f, indent=2)
 
 # =========================
 # 4) LLM SOCKET SERVER + LLM TRAINING (agent_1, agent_5)
@@ -228,7 +196,6 @@ from openai import OpenAI
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     print("WARNING: OPENAI_API_KEY not set. Skipping LLM socket training.")
-    print("To enable: os.environ['OPENAI_API_KEY'] = 'your_key_here'")
     llm_metrics = {"status": "skipped", "reason": "no api key"}
 else:
     client = OpenAI(api_key=OPENAI_API_KEY)

@@ -22,25 +22,12 @@ def verify():
     except Exception as e:
         checks.append("[FAIL] OpenEnv wrapper: {e}")
 
-    # 2. PPO policy forward pass works
-    try:
-        import torch
-        from training.ppo_policy import CrisisActorCritic, AGENT_ID_TO_ROLE_IDX
-        policy = CrisisActorCritic()
-        obs = torch.randn(6, 32)
-        roles = torch.LongTensor(list(AGENT_ID_TO_ROLE_IDX.values()))
-        actions, lps, entropy, values = policy.get_action_and_value(obs, roles)
-        assert actions.shape == (6, 5), f"action shape wrong: {actions.shape}"
-        checks.append("[PASS] PPO policy")
-    except Exception as e:
-        checks.append("[FAIL] PPO policy: {e}")
-
-    # 2b. GRPO Pipeline importable
+    # 2. GRPO Pipeline importable and functional
     try:
         from training.grpo_trainer import GRPOPipeline, parse_llm_action
-        pipeline = GRPOPipeline.__new__(GRPOPipeline)
         action = parse_llm_action('{"lockdown_level": "full", "interest_rate": "+0.5"}')
         assert isinstance(action, list) and len(action) == 5
+        assert action[0] == 3  # "full" lockdown = index 3
         checks.append("[PASS] GRPO pipeline")
     except Exception as e:
         checks.append(f"[FAIL] GRPO pipeline: {e}")

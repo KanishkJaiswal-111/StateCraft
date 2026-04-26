@@ -1,4 +1,4 @@
 from .loop import run_training_loop, create_agents
-from .buffer import PPOBuffer
+from .grpo_trainer import GRPOPipeline
 
-__all__ = ['run_training_loop', 'create_agents', 'PPOBuffer']
+__all__ = ['run_training_loop', 'create_agents', 'GRPOPipeline']

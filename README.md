@@ -28,10 +28,7 @@ python verify_integration.py
 # Run GRPO training (primary — uses Unsloth+TRL if available, env-only fallback otherwise)
 python -m training.grpo_trainer
 
-# Run lightweight PPO training (fast evaluator for generalization tests)
-python -m training.ppo_trainer
-
-# Run zero-shot generalization evaluation (requires PPO checkpoint)
+# Run zero-shot generalization evaluation
 python -m eval.generalization
 ```
 

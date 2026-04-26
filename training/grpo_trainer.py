@@ -184,8 +184,9 @@ class GRPOPipeline:
         )
         print(f"[GRPO] Model loaded: {model_name}")
 
-    def _environment_reward_func(self, completions, prompts, **kwargs):
+    def _environment_reward_func(self, completions, **kwargs):
         """Reward function: parse LLM output → step env → return reward."""
+        prompts = kwargs.get("prompt", [])
         rewards = []
         env = CrisisGovernanceEnv(config=self.config)
 
@@ -245,7 +246,7 @@ class GRPOPipeline:
         trainer = self._GRPOTrainer(
             model=self.model,
             processing_class=self.tokenizer,
-            reward_funcs=self._environment_reward_func,
+            reward_funcs=[self._environment_reward_func],
             args=training_args,
             train_dataset=dataset,
         )
