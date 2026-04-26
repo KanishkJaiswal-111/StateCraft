@@ -182,6 +182,9 @@ class GRPOPipeline:
             use_gradient_checkpointing="unsloth",
             random_state=42,
         )
+        self.tokenizer.padding_side = "left"
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         print(f"[GRPO] Model loaded: {model_name}")
 
     def _environment_reward_func(self, completions, **kwargs):
@@ -280,10 +283,22 @@ class GRPOPipeline:
             ep_step = 0
 
             for step_num in range(30):  # max steps
-                # Random policy (to be replaced by LLM inference)
-                actions = np.array([[random.randint(0, 4), random.randint(0, 4),
-                                     random.randint(0, 4), random.randint(0, 3),
-                                     random.randint(0, 3)] for _ in range(6)])
+                if getattr(self, 'model', None) is not None and getattr(self, 'tokenizer', None) is not None:
+                    # Use trained LLM policy
+                    prompts = [build_state_prompt(self.env.state, f"agent_{aid}", ROLE_NAMES[f"agent_{aid}"]) for aid in range(5)]
+                    inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to("cuda")
+                    outputs = self.model.generate(**inputs, max_new_tokens=64, use_cache=True, pad_token_id=self.tokenizer.eos_token_id)
+                    actions = np.zeros((6, 5), dtype=int)
+                    for aid in range(5):
+                        gen_tokens = outputs[aid][inputs.input_ids.shape[1]:]
+                        text = self.tokenizer.decode(gen_tokens, skip_special_tokens=True)
+                        actions[aid] = parse_llm_action(text)
+                    actions[5] = [random.randint(0,4), random.randint(0,4), random.randint(0,4), random.randint(0,3), random.randint(0,3)]
+                else:
+                    # Random policy fallback
+                    actions = np.array([[random.randint(0, 4), random.randint(0, 4),
+                                         random.randint(0, 4), random.randint(0, 3),
+                                         random.randint(0, 3)] for _ in range(6)])
                 step = self.env.step(actions)
                 ep_reward += step.reward
                 ep_step += 1

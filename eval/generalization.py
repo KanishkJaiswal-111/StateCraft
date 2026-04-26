@@ -18,8 +18,8 @@ N_EVAL_EPISODES = 20
 SCENARIOS = ["pandemic", "economic", "disaster"]
 
 
-def evaluate_scenario(scenario, n_episodes=N_EVAL_EPISODES, seed=0):
-    """Evaluate policy on a scenario using environment rollouts."""
+def evaluate_scenario(scenario, n_episodes=N_EVAL_EPISODES, seed=0, model=None, tokenizer=None):
+    """Evaluate policy on a scenario using GRPO LLM inference or random rollouts."""
     random.seed(seed)
     np.random.seed(seed)
     env = CrisisGovernanceEnv(config={"scenario": scenario})
@@ -30,10 +30,26 @@ def evaluate_scenario(scenario, n_episodes=N_EVAL_EPISODES, seed=0):
         done = False
         ep_reward = 0.0
         while not done:
-            # Random policy rollout (baseline)
-            actions = np.array([[random.randint(0, 4), random.randint(0, 4),
-                                 random.randint(0, 4), random.randint(0, 3),
-                                 random.randint(0, 3)] for _ in range(6)])
+            if model is not None and tokenizer is not None:
+                from training.grpo_trainer import build_state_prompt, ROLE_NAMES, parse_llm_action
+                prompts = []
+                for aid in range(5):
+                    agent_id = f"agent_{aid}"
+                    prompts.append(build_state_prompt(env.state, agent_id, ROLE_NAMES[agent_id]))
+                import torch
+                inputs = tokenizer(prompts, return_tensors="pt", padding=True).to("cuda")
+                outputs = model.generate(**inputs, max_new_tokens=64, use_cache=True, pad_token_id=tokenizer.eos_token_id)
+                actions = np.zeros((6, 5), dtype=int)
+                for aid in range(5):
+                    gen_tokens = outputs[aid][inputs.input_ids.shape[1]:]
+                    text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+                    actions[aid] = parse_llm_action(text)
+                actions[5] = [random.randint(0,4), random.randint(0,4), random.randint(0,4), random.randint(0,3), random.randint(0,3)]
+            else:
+                # Random policy rollout (baseline)
+                actions = np.array([[random.randint(0, 4), random.randint(0, 4),
+                                     random.randint(0, 4), random.randint(0, 3),
+                                     random.randint(0, 3)] for _ in range(6)])
             step = env.step(actions)
             ep_reward += step.reward
             done = step.done
@@ -58,10 +74,26 @@ def run_generalization_test(checkpoint_path=None, train_scenario="pandemic"):
                         If None, uses random policy rollouts.
         train_scenario: The scenario used for training.
     """
+    model, tokenizer = None, None
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        try:
+            from unsloth import FastLanguageModel
+            print(f"Loading GRPO LLM from {checkpoint_path} for generalization evaluation...")
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                checkpoint_path, max_seq_length=1024, load_in_4bit=True
+            )
+            FastLanguageModel.for_inference(model)
+            tokenizer.padding_side = "left"
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+        except Exception as e:
+            print(f"Could not load Unsloth model: {e}. Falling back to random baseline.")
+            model = None
+
     results = {}
     for scenario in SCENARIOS:
         print(f"  Evaluating on {scenario}...")
-        results[scenario] = evaluate_scenario(scenario)
+        results[scenario] = evaluate_scenario(scenario, model=model, tokenizer=tokenizer)
 
     train_score = results[train_scenario]["mean_score"]
     transfer_results = {}

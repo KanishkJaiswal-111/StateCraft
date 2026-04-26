@@ -18,7 +18,7 @@ AUD_OUT_DIR = os.path.join(RUN_ROOT, "auditor_outputs")
 LLM_OUT_DIR = os.path.join(RUN_ROOT, "llm_outputs")
 
 GRPO_EPISODES = 2000
-AUD_EPISODES_PER_SCENARIO = 140
+AUD_EPISODES_PER_SCENARIO = 20
 
 os.makedirs(RUN_ROOT, exist_ok=True)
 os.makedirs(GRPO_CKPT_DIR, exist_ok=True)
@@ -68,7 +68,7 @@ history = pipeline.train_grpo(num_episodes=GRPO_EPISODES)
 # =========================
 from eval.generalization import run_generalization_test
 
-gen_results = run_generalization_test()
+gen_results = run_generalization_test(checkpoint_path=os.path.join(GRPO_CKPT_DIR, "lora_model"))
 with open(os.path.join(RUN_ROOT, "generalization_results.json"), "w", encoding="utf-8") as f:
     json.dump(gen_results, f, indent=2)
 
@@ -105,28 +105,69 @@ def encode_action(a):
         CRISIS_MAP.get(a.get("crisis_response","monitor"), 0) / 3.0,
     ], dtype=np.float32)
 
-def collect_dataset(scenarios=("pandemic","economic","disaster"), episodes_per_scenario=120, seq_len=10, seed=42):
-    """Collect auditor training data using environment rollouts with random policy."""
+def collect_dataset(scenarios=("pandemic","economic","disaster"), episodes_per_scenario=20, seq_len=10, seed=42):
+    """Collect auditor training data using environment rollouts with the trained GRPO policy (if available) or random fallback."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+    # Try loading Unsloth model
+    model, tokenizer = None, None
+    lora_path = os.path.join(GRPO_CKPT_DIR, "lora_model")
+    if os.path.exists(lora_path):
+        try:
+            from unsloth import FastLanguageModel
+            print(f"[Auditor Data Collection] Loading trained GRPO model from {lora_path}...")
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                lora_path, max_seq_length=1024, load_in_4bit=True
+            )
+            FastLanguageModel.for_inference(model)
+            tokenizer.padding_side = "left"
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+        except Exception as e:
+            print(f"[Auditor Data Collection] Could not load Unsloth model: {e}. Using random fallback.")
+            model = None
+
+    from training.grpo_trainer import build_state_prompt, ROLE_NAMES, parse_llm_action
 
     X, y = [], []
 
     for scenario in scenarios:
         env = CrisisGovernanceEnv(config={"scenario": scenario})
 
-        for _ in range(episodes_per_scenario):
+        for ep in range(episodes_per_scenario):
+            if ep % 5 == 0:
+                print(f"  Collecting Auditor trajectories for {scenario}: Episode {ep}/{episodes_per_scenario}")
             rr = env.reset()
             obs = rr.observations.astype(np.float32)
             done = False
             seq_buffers = {aid: [] for aid in range(5)}
 
             while not done:
-                # Random policy rollout
-                actions = np.array([[random.randint(0, 4), random.randint(0, 4),
-                                     random.randint(0, 4), random.randint(0, 3),
-                                     random.randint(0, 3)] for _ in range(6)])
+                state = env.state
+                
+                if model is not None:
+                    prompts = []
+                    for aid in range(5):
+                        agent_id = f"agent_{aid}"
+                        prompts.append(build_state_prompt(state, agent_id, ROLE_NAMES[agent_id]))
+                    
+                    inputs = tokenizer(prompts, return_tensors="pt", padding=True).to("cuda")
+                    outputs = model.generate(**inputs, max_new_tokens=64, use_cache=True, pad_token_id=tokenizer.eos_token_id)
+                    
+                    actions = np.zeros((6, 5), dtype=int)
+                    for aid in range(5):
+                        gen_tokens = outputs[aid][inputs.input_ids.shape[1]:]
+                        text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+                        actions[aid] = parse_llm_action(text)
+                    actions[5] = [random.randint(0,4), random.randint(0,4), random.randint(0,4), random.randint(0,3), random.randint(0,3)]
+                else:
+                    # Random policy rollout fallback
+                    actions = np.array([[random.randint(0, 4), random.randint(0, 4),
+                                         random.randint(0, 4), random.randint(0, 3),
+                                         random.randint(0, 3)] for _ in range(6)])
+
                 sr = env.step(actions)
                 actions_dict = sr.info.get("actions_dict", {})
 
