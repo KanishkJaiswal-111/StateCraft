@@ -2,7 +2,7 @@
 
 A multi-agent reinforcement learning simulation platform for modeling crisis governance dynamics. Six AI agents with distinct roles, hidden goals, and competing incentives must negotiate, form coalitions, and govern through pandemic, economic, and disaster scenarios. 
 
-This project incorporates the OpenEnv standard, a shared Actor-Critic PPO policy, emergence detection, and counterfactual auditing.
+This project incorporates the OpenEnv standard, GRPO-based LLM policy optimization (via Unsloth + TRL), emergence detection, and counterfactual auditing.
 
 ## 🎯 Summary for Judges
 
@@ -25,10 +25,13 @@ pip install -r requirements.txt
 # Verify all modules are wired correctly
 python verify_integration.py
 
-# Run GRPO LLM training with Unsloth and TRL
+# Run GRPO training (primary — uses Unsloth+TRL if available, env-only fallback otherwise)
 python -m training.grpo_trainer
 
-# Run zero-shot generalization evaluation (after training)
+# Run lightweight PPO training (fast evaluator for generalization tests)
+python -m training.ppo_trainer
+
+# Run zero-shot generalization evaluation (requires PPO checkpoint)
 python -m eval.generalization
 ```
 
@@ -45,7 +48,7 @@ python -m eval.generalization
 
 ## 💰 Reward Functions
 
-To enforce complex trade-offs, StateCraft uses a comprehensive 13-signal reward stack. All rewards are strictly clipped to `[-10, 10]` per turn to stabilize PPO training. An agent's base reward is a weighted blend: **70% Public Role Performance** and **30% Hidden Goal Completion**. 
+To enforce complex trade-offs, StateCraft uses a comprehensive 13-signal reward stack. All rewards are strictly clipped to `[-10, 10]` per turn to stabilize training. An agent's base reward is a weighted blend: **70% Public Role Performance** and **30% Hidden Goal Completion**. 
 
 This is augmented by the following global reward layers:
 - **Role Layer**: `mortality_reduction`, `gdp_performance`, `crisis_resolution`

@@ -35,6 +35,16 @@ def verify():
     except Exception as e:
         checks.append("[FAIL] PPO policy: {e}")
 
+    # 2b. GRPO Pipeline importable
+    try:
+        from training.grpo_trainer import GRPOPipeline, parse_llm_action
+        pipeline = GRPOPipeline.__new__(GRPOPipeline)
+        action = parse_llm_action('{"lockdown_level": "full", "interest_rate": "+0.5"}')
+        assert isinstance(action, list) and len(action) == 5
+        checks.append("[PASS] GRPO pipeline")
+    except Exception as e:
+        checks.append(f"[FAIL] GRPO pipeline: {e}")
+
     # 3. OpenEnv step works end-to-end
     try:
         from openenv.wrapper import CrisisGovernanceEnv

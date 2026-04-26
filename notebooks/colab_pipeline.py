@@ -16,15 +16,15 @@ REPO_URL = "https://github.com/KanishkJaiswal-111/StateCraft.git"
 REPO_DIR = "/content/StateCraft" if os.path.exists("/content") else os.path.abspath(os.path.join(os.getcwd(), ".."))
 
 RUN_ROOT = "/content/drive/MyDrive/StateCraft" if os.path.exists("/content/drive") else "./StateCraft_Runs"
-PPO_CKPT_DIR = os.path.join(RUN_ROOT, "ppo_checkpoints")
+GRPO_CKPT_DIR = os.path.join(RUN_ROOT, "grpo_checkpoints")
 AUD_OUT_DIR = os.path.join(RUN_ROOT, "auditor_outputs")
 LLM_OUT_DIR = os.path.join(RUN_ROOT, "llm_outputs")
 
-PPO_EPISODES = 2000
+GRPO_EPISODES = 2000
 AUD_EPISODES_PER_SCENARIO = 140
 
 os.makedirs(RUN_ROOT, exist_ok=True)
-os.makedirs(PPO_CKPT_DIR, exist_ok=True)
+os.makedirs(GRPO_CKPT_DIR, exist_ok=True)
 os.makedirs(AUD_OUT_DIR, exist_ok=True)
 os.makedirs(LLM_OUT_DIR, exist_ok=True)
 
@@ -42,7 +42,7 @@ for mod_name in list(sys.modules.keys()):
     if mod_name.startswith(("training", "openenv", "metrics", "causal", "auditor", "env", "core", "agents")):
         del sys.modules[mod_name]
 
-# Install project dependencies and openai
+# Install project dependencies
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt", "openai>=1.0.0"], check=True)
 
 print("CUDA available:", torch.cuda.is_available())
@@ -52,161 +52,43 @@ if torch.cuda.is_available():
 subprocess.run([sys.executable, "verify_integration.py"], check=True)
 
 # =========================
-# 1) PPO TRAINING (MAIN RL)
-#    with inline causal + auditor metric tracking
+# 1) GRPO TRAINING (PRIMARY RL)
 # =========================
-from training.ppo_trainer import PPOTrainer
-from openenv.wrapper import AGENT_IDS as _AGENT_IDS
-from causal.planner import CausalHorizonPlanner
-from causal.score import CausalReasoningScore
-import random as _rnd
+from training.grpo_trainer import GRPOPipeline
 
-# ── Monkey-patch PPOTrainer to guarantee causal/auditor metrics work ──
-_orig_init = PPOTrainer.__init__
-def _patched_init(self, *args, **kwargs):
-    _orig_init(self, *args, **kwargs)
-    self._causal_planner = CausalHorizonPlanner()
-    self._causal_scorer = CausalReasoningScore(self._causal_planner)
-    self._ep_step = 0
-    self._causal_val = 0.0
-_patched_init.__doc__ = _orig_init.__doc__
-PPOTrainer.__init__ = _patched_init
-
-_orig_collect = PPOTrainer.collect_rollout
-def _patched_collect(self):
-    obs_buf, role_buf, act_buf = [], [], []
-    lp_buf, rew_buf, done_buf, val_buf = [], [], [], []
-
-    obs = torch.FloatTensor(self.env.reset().observations)
-    for _ in range(128):  # N_STEPS
-        with torch.no_grad():
-            actions, log_probs, _, values = self.policy.get_action_and_value(obs, self._role_ids)
-        step = self.env.step(actions.numpy())
-        next_obs = torch.FloatTensor(step.observations)
-
-        obs_buf.append(obs); role_buf.append(self._role_ids)
-        act_buf.append(actions); lp_buf.append(log_probs)
-        rew_buf.append(torch.FloatTensor([step.reward] * 6))
-        done_buf.append(torch.FloatTensor([float(step.done)] * 6))
-        val_buf.append(values)
-        obs = next_obs
-
-        # ── Phase 2: Register causal chains ──
-        self._ep_step += 1
-        if hasattr(self.env, '_last_actions'):
-            ad = self.env._last_actions
-            for a_id in _AGENT_IDS:
-                self._causal_planner.register_action(self._ep_step, a_id, ad.get(a_id, {}))
-
-        if hasattr(self.env, '_prev_state') and hasattr(self.env._env, 'state_manager'):
-            cs = self.env._env.state_manager.state
-            ps = self.env._prev_state
-            sd = {}
-            for k in cs:
-                if isinstance(cs[k], (int, float)) and k in ps and isinstance(ps[k], (int, float)):
-                    sd[k] = cs[k] - ps[k]
-            self._causal_planner.resolve_chains(self._ep_step, sd)
-
-        if step.done:
-            # Compute causal score from resolved chains
-            resolved = self._causal_planner.resolved_chains
-            if len(resolved) > 0:
-                scores = []
-                for a_id in _AGENT_IDS[:5]:
-                    s = self._causal_scorer.compute_episode_score(
-                        agent_id=a_id, episode=0, episode_chains=resolved)
-                    scores.append(s)
-                self._causal_val = float(np.mean(scores))
-            elif len(self._causal_planner.pending_chains) > 0:
-                self._causal_val = 0.225
-            else:
-                self._causal_val = 0.0
-
-            # Auditor inference log (correct format for compute_auditor_accuracy)
-            roles = ["finance_minister", "political_pressure", "monetary_authority",
-                     "public_health", "disaster_response"]
-            true_r = _rnd.choice(roles)
-            inf_r = true_r if _rnd.random() > 0.35 else _rnd.choice(roles)
-            self.tracker.inference_log.append({"inferred": inf_r, "ground_truth": true_r})
-
-            # Reset planner
-            self._causal_planner.reset()
-            self._causal_planner.resolved_chains = []
-            self._ep_step = 0
-            obs = torch.FloatTensor(self.env.reset().observations)
-
-    return {"obs": torch.stack(obs_buf), "roles": torch.stack(role_buf),
-            "actions": torch.stack(act_buf), "logprobs": torch.stack(lp_buf),
-            "rewards": torch.stack(rew_buf), "dones": torch.stack(done_buf),
-            "values": torch.stack(val_buf)}
-PPOTrainer.collect_rollout = _patched_collect
-
-_orig_train = PPOTrainer.train
-def _patched_train(self, num_episodes=None):
-    n_ep = num_episodes or self.config.get('num_episodes', 500)
-    print(f"Starting PPO training — {n_ep} episodes")
-    print(f"Policy params: {sum(p.numel() for p in self.policy.parameters()):,}")
-    all_metrics = []
-
-    for episode in range(n_ep):
-        batch = self.collect_rollout()
-        loss = self.update(batch)
-        ep_reward = batch["rewards"].sum(dim=0).mean().item()
-        metrics = self.tracker.compute_episode_metrics(self.env._env)
-
-        # Inject Phase 2 scores directly
-        metrics["causal_score"] = self._causal_val
-        # auditor_accuracy is already computed from inference_log by compute_episode_metrics
-
-        log = {"episode": episode, "episode_reward": ep_reward,
-               "society_score": metrics.get("society_score", 0.0),
-               "causal_score": metrics["causal_score"],
-               "auditor_accuracy": metrics.get("auditor_accuracy", 0.0),
-               "alliance_stability": metrics.get("alliance_stability", 0.0),
-               "betrayal_rate": metrics.get("betrayal_rate", 0.0),
-               "turns_survived": metrics.get("turns_survived", 0),
-               "difficulty_tier": metrics.get("difficulty_tier", 1),
-               "loss": loss}
-        all_metrics.append(log)
-        self.metrics_history.append(log)
-
-        if self.use_wandb:
-            self.wandb.log({k: v for k, v in log.items() if v is not None})
-
-        if episode % 10 == 0:
-            cs_val = metrics.get("causal_score", 0.0)
-            cs_str = f"{cs_val:.3f}" if cs_val is not None else "N/A"
-            print(f"Ep {episode:4d} | reward={ep_reward:6.2f} | "
-                  f"society={metrics.get('society_score',0):.1f} | causal={cs_str} | "
-                  f"auditor={metrics.get('auditor_accuracy',0):.2f} | loss={loss:.4f}")
-
-        if episode % 50 == 0 and episode > 0:
-            self._save_checkpoint(episode)
-
-    self._save_checkpoint(n_ep, final=True)
-    self._save_metrics(all_metrics)
-    print("Training complete.")
-    return all_metrics
-PPOTrainer.train = _patched_train
-
-# ── Run PPO ──
-ppo = PPOTrainer(
-    config={"scenario": "pandemic", "num_episodes": PPO_EPISODES},
-    use_wandb=False,
-    checkpoint_dir=PPO_CKPT_DIR
+pipeline = GRPOPipeline(
+    config={"scenario": "pandemic", "num_episodes": GRPO_EPISODES},
+    checkpoint_dir=GRPO_CKPT_DIR
 )
-ppo.train(num_episodes=PPO_EPISODES)
-
-final_ckpt = os.path.join(PPO_CKPT_DIR, "policy_final.pt")
+history = pipeline.train_grpo(num_episodes=GRPO_EPISODES)
 
 # =========================
 # 2) GENERALIZATION EVAL
 # =========================
+# Generalization uses the lightweight PPO policy network as a fast evaluator.
+# The PPO policy can be trained separately or loaded from a checkpoint.
 from eval.generalization import run_generalization_test
+from training.ppo_policy import CrisisActorCritic
 
-gen_results = run_generalization_test(final_ckpt)
-with open(os.path.join(PPO_CKPT_DIR, "generalization_results.json"), "w", encoding="utf-8") as f:
-    json.dump(gen_results, f, indent=2)
+# Train a quick PPO policy for generalization evaluation
+from training.ppo_trainer import PPOTrainer
+ppo_ckpt_dir = os.path.join(RUN_ROOT, "ppo_checkpoints")
+os.makedirs(ppo_ckpt_dir, exist_ok=True)
+
+ppo = PPOTrainer(
+    config={"scenario": "pandemic", "num_episodes": 200},
+    use_wandb=False,
+    checkpoint_dir=ppo_ckpt_dir
+)
+ppo.train(num_episodes=200)
+
+final_ckpt = os.path.join(ppo_ckpt_dir, "policy_final.pt")
+if os.path.exists(final_ckpt):
+    gen_results = run_generalization_test(final_ckpt)
+    with open(os.path.join(RUN_ROOT, "generalization_results.json"), "w", encoding="utf-8") as f:
+        json.dump(gen_results, f, indent=2)
+else:
+    gen_results = {"status": "skipped", "reason": "no checkpoint"}
 
 # =========================
 # 3) AUDITOR CLASSIFIER (RL-based inference)
@@ -277,9 +159,9 @@ def collect_dataset(policy, scenarios=("pandemic","economic","disaster"), episod
                 for aid in range(5):
                     ag = f"agent_{aid}"
                     a = actions_dict.get(ag, {})
-                    obs_feat = obs[aid, :]  # shape (32,)
-                    act_feat = encode_action(a) # shape (6,)
-                    feat = np.concatenate([obs_feat, act_feat], axis=0) # shape (38,)
+                    obs_feat = obs[aid, :]
+                    act_feat = encode_action(a)
+                    feat = np.concatenate([obs_feat, act_feat], axis=0)
                     seq_buffers[aid].append(feat)
 
                 obs = sr.observations.astype(np.float32)
@@ -296,43 +178,47 @@ def collect_dataset(policy, scenarios=("pandemic","economic","disaster"), episod
 
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64)
 
-policy = load_policy(final_ckpt)
-X, y = collect_dataset(policy, episodes_per_scenario=AUD_EPISODES_PER_SCENARIO, seq_len=10, seed=7)
+if os.path.exists(final_ckpt):
+    policy = load_policy(final_ckpt)
+    X, y = collect_dataset(policy, episodes_per_scenario=AUD_EPISODES_PER_SCENARIO, seq_len=10, seed=7)
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-clf = RandomForestClassifier(
-    n_estimators=700,
-    max_depth=None,
-    class_weight="balanced_subsample",
-    random_state=42,
-    n_jobs=-1
-)
-clf.fit(X_train, y_train)
-pred = clf.predict(X_test)
+    clf = RandomForestClassifier(
+        n_estimators=700,
+        max_depth=None,
+        class_weight="balanced_subsample",
+        random_state=42,
+        n_jobs=-1
+    )
+    clf.fit(X_train, y_train)
+    pred = clf.predict(X_test)
 
-aud_acc = float(accuracy_score(y_test, pred))
-aud_cm = confusion_matrix(y_test, pred, labels=[0,1,2,3,4])
-aud_report = classification_report(
-    y_test, pred,
-    labels=[0,1,2,3,4],
-    target_names=CLASS_NAMES,
-    output_dict=True,
-    zero_division=0
-)
+    aud_acc = float(accuracy_score(y_test, pred))
+    aud_cm = confusion_matrix(y_test, pred, labels=[0,1,2,3,4])
+    aud_report = classification_report(
+        y_test, pred,
+        labels=[0,1,2,3,4],
+        target_names=CLASS_NAMES,
+        output_dict=True,
+        zero_division=0
+    )
 
-aud_out = {
-    "overall_accuracy": aud_acc,
-    "class_names": CLASS_NAMES,
-    "confusion_matrix": aud_cm.tolist(),
-    "classification_report": aud_report,
-    "n_train": int(len(y_train)),
-    "n_test": int(len(y_test))
-}
-with open(os.path.join(AUD_OUT_DIR, "auditor_classifier_report.json"), "w", encoding="utf-8") as f:
-    json.dump(aud_out, f, indent=2)
+    aud_out = {
+        "overall_accuracy": aud_acc,
+        "class_names": CLASS_NAMES,
+        "confusion_matrix": aud_cm.tolist(),
+        "classification_report": aud_report,
+        "n_train": int(len(y_train)),
+        "n_test": int(len(y_test))
+    }
+    with open(os.path.join(AUD_OUT_DIR, "auditor_classifier_report.json"), "w", encoding="utf-8") as f:
+        json.dump(aud_out, f, indent=2)
+else:
+    aud_acc = 0.0
+    print("Skipping auditor classifier — no PPO checkpoint available.")
 
 # =========================
 # 4) LLM SOCKET SERVER + LLM TRAINING (agent_1, agent_5)
@@ -341,7 +227,7 @@ from openai import OpenAI
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    print("WARNING: OPENAI_API_KEY not set. Skipping LLM training.")
+    print("WARNING: OPENAI_API_KEY not set. Skipping LLM socket training.")
     print("To enable: os.environ['OPENAI_API_KEY'] = 'your_key_here'")
     llm_metrics = {"status": "skipped", "reason": "no api key"}
 else:
@@ -492,7 +378,6 @@ Return JSON object only.
     t = threading.Thread(target=run_server_bg, daemon=True)
     t.start()
 
-    # Train curriculum with LLM socket routing
     from training.loop import run_training_loop
 
     config = {
@@ -521,33 +406,39 @@ Return JSON object only.
 # 5) FINAL COMPLETE SCORECARD
 # =========================
 try:
-    with open(os.path.join(PPO_CKPT_DIR, "training_metrics.json"), "r") as f:
-        ppo_metrics = json.load(f)
-    ppo_df = pd.DataFrame(ppo_metrics)
+    grpo_metrics_path = os.path.join(GRPO_CKPT_DIR, "training_metrics.json")
+    if os.path.exists(grpo_metrics_path):
+        with open(grpo_metrics_path, "r") as f:
+            grpo_metrics = json.load(f)
+        grpo_df = pd.DataFrame(grpo_metrics)
 
-    scorecard = {
-        "ppo": {
-            "episodes": int(len(ppo_df)),
-            "final_reward": float(ppo_df["episode_reward"].iloc[-1]),
-            "best_reward": float(ppo_df["episode_reward"].max()),
-            "last100_reward_mean": float(ppo_df["episode_reward"].tail(100).mean()),
-            "final_society_score": float(ppo_df["society_score"].iloc[-1]),
-            "best_society_score": float(ppo_df["society_score"].max()),
-            "last100_society_mean": float(ppo_df["society_score"].tail(100).mean())
-        },
-        "generalization": gen_results,
-        "auditor_classifier": {
-            "overall_accuracy": aud_acc
-        },
-        "llm_training": llm_metrics
-    }
+        scorecard = {
+            "grpo": {
+                "episodes": int(len(grpo_df)),
+                "final_reward": float(grpo_df["episode_reward"].iloc[-1]),
+                "best_reward": float(grpo_df["episode_reward"].max()),
+                "last100_reward_mean": float(grpo_df["episode_reward"].tail(100).mean()),
+                "final_society_score": float(grpo_df["society_score"].iloc[-1]),
+                "best_society_score": float(grpo_df["society_score"].max()),
+                "last100_society_mean": float(grpo_df["society_score"].tail(100).mean()),
+                "final_causal_score": float(grpo_df["causal_score"].iloc[-1]),
+                "final_auditor_accuracy": float(grpo_df["auditor_accuracy"].iloc[-1]),
+            },
+            "generalization": gen_results,
+            "auditor_classifier": {
+                "overall_accuracy": aud_acc
+            },
+            "llm_training": llm_metrics if 'llm_metrics' in dir() else {"status": "skipped"}
+        }
 
-    scorecard_path = os.path.join(RUN_ROOT, "complete_training_scorecard.json")
-    with open(scorecard_path, "w", encoding="utf-8") as f:
-        json.dump(scorecard, f, indent=2)
+        scorecard_path = os.path.join(RUN_ROOT, "complete_training_scorecard.json")
+        with open(scorecard_path, "w", encoding="utf-8") as f:
+            json.dump(scorecard, f, indent=2)
 
-    print("\n===== COMPLETE TRAINING SCORECARD =====")
-    print(json.dumps(scorecard, indent=2))
-    print("\nSaved:", scorecard_path)
+        print("\n===== COMPLETE TRAINING SCORECARD =====")
+        print(json.dumps(scorecard, indent=2))
+        print("\nSaved:", scorecard_path)
+    else:
+        print("No GRPO training metrics found.")
 except Exception as e:
     print("Could not generate scorecard:", e)
