@@ -18,16 +18,16 @@ api_host: 0.0.0.0
 api_port: 5000
 log_level: INFO
 
-# PPO Hyperparameters (Point 4B)
-# Defines configuration for long-horizon training
-ppo_hyperparameters:
-  gamma: 0.95              # Explicit discount factor
-  learning_rate: 3e-4
-  n_steps: 2048
-  batch_size: 64
-  n_epochs: 10
-  clip_range: 0.2
-  ent_coef: 0.01
+# GRPO Hyperparameters
+# Defines configuration for LLM-based policy optimization
+grpo_hyperparameters:
+  learning_rate: 2e-5
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  num_generations: 4
+  max_prompt_length: 256
+  max_completion_length: 128
+  num_train_epochs: 1
 
 # Optional RL role controller settings.
 # When enabled, shallow-DL policy controls the selected RL agents.
