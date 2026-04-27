@@ -215,8 +215,8 @@ class RewardSystem:
             self._queue_delayed('gdp_performance', agent_id, 2.0, 10)
 
         # Crisis Resolution (+8.0, Role, immediate)
-        # Trigger: Crisis severity drops below critical threshold
-        if state['stability'] > 0.7 and state['mortality'] < 0.01:
+        # Trigger: Crisis severity drops below critical threshold (only after turn 10)
+        if turn >= 10 and state['stability'] > 0.7 and state['mortality'] < 0.01:
             total += 8.0
 
         # Inter-Agent Trust (+1.0, Social, 5T delay)
