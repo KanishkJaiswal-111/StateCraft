@@ -47,12 +47,22 @@ for mod_name in list(sys.modules.keys()):
                              "env","core","agents","emergence","defense")):
         del sys.modules[mod_name]
 
-subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-r", "requirements.txt",
-     "openai>=1.0.0", "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
-     "unsloth-zoo"],
-    check=True
-)
+try:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", "requirements.txt",
+         "openai>=1.0.0", "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
+         "unsloth-zoo"],
+        check=True,
+        capture_output=True,
+        text=True
+    )
+except subprocess.CalledProcessError as e:
+    print("\n" + "="*50)
+    print("PIP INSTALLATION FAILED. ERROR LOG:")
+    print("="*50)
+    print(e.stderr)
+    print("="*50)
+    raise RuntimeError(f"Pip install failed. See the log above. Exact error: {e.stderr[-1000:]}")
 
 import numpy as np
 import pandas as pd
