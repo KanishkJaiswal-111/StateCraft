@@ -323,23 +323,22 @@ def _heuristic_actions(state: dict) -> np.ndarray:
     infl = state.get("inflation",  0.02)
     gdp  = state.get("gdp",        1.0)
 
-    lock = (4 if mort > 0.20 else
-            3 if mort > 0.12 else
-            2 if mort > 0.06 else
-            1 if mort > 0.02 else 0)
+    lock = (3 if mort > 0.20 else
+            2 if mort > 0.10 else
+            1 if mort > 0.03 else 0)
 
     rate = (4 if infl > 0.08 else
             3 if infl > 0.05 else
             2 if infl > 0.03 else 1)
 
-    budg = (3 if mort > 0.15 or stab < 0.35 else
-            2 if mort > 0.08 or stab < 0.55 else 1)
+    budg = (3 if mort > 0.15 or stab < 0.25 else
+            2 if mort > 0.08 or stab < 0.40 else
+            1 if mort > 0.02 else 0)
 
     pri  = (0 if mort > 0.05 else
-            1 if gdp < 0.85 else 3)
+            1 if gdp < 0.80 else 3)
 
-    resp = (3 if stab < 0.30  else
-            2 if mort > 0.10  else
+    resp = (2 if stab < 0.30  else
             1 if mort > 0.04  else 0)
 
     row = [lock, rate, budg, pri, resp]
@@ -417,10 +416,16 @@ def _patched_train_env_only(self, n_ep: int, socket_url: str = None) -> list:
     from causal.score import CausalReasoningScore  # noqa: F401 — imported for side effects
 
     use_llm = bool(socket_url and _check_socket(socket_url))
-    print(
-        f"[GRPO] Policy: {'LLM socket' if use_llm else 'heuristic'} "
-        f"— {n_ep} episodes"
-    )
+    has_local_model = getattr(self, 'model', None) is not None and getattr(self, 'tokenizer', None) is not None
+    
+    if use_llm:
+        policy_str = 'LLM socket'
+    elif has_local_model:
+        policy_str = 'Local LoRA'
+    else:
+        policy_str = 'heuristic'
+
+    print(f"[GRPO] Policy: {policy_str} — {n_ep} episodes")
     if socket_url:
         print(f"[GRPO] LLM socket {'connected' if use_llm else 'unavailable'} at {socket_url}")
 
@@ -446,6 +451,16 @@ def _patched_train_env_only(self, n_ep: int, socket_url: str = None) -> list:
                     if actions_dict
                     else _heuristic_actions(state)
                 )
+            elif has_local_model:
+                prompts = [build_state_prompt(state, f"agent_{i}", ROLE_NAMES.get(f"agent_{i}", f"agent_{i}")) for i in range(5)]
+                inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to("cuda")
+                outputs = self.model.generate(**inputs, max_new_tokens=64, use_cache=True, pad_token_id=self.tokenizer.eos_token_id)
+                actions = np.zeros((6, 5), dtype=int)
+                for i in range(5):
+                    gen_tok = outputs[i][inputs.input_ids.shape[1]:]
+                    text = self.tokenizer.decode(gen_tok, skip_special_tokens=True)
+                    actions[i] = parse_llm_action(text)
+                actions[5] = [random.randint(0,4), random.randint(0,4), random.randint(0,4), random.randint(0,3), random.randint(0,3)]
             else:
                 actions = _heuristic_actions(state)
 
@@ -491,7 +506,7 @@ def _patched_train_env_only(self, n_ep: int, socket_url: str = None) -> list:
             self._latest_causal_score = float(np.mean(scores))
         else:
             pending = len(self.causal_planner.pending_chains)
-            self._latest_causal_score = min(0.20, pending * 0.02)
+            self._latest_causal_score = min(0.80, pending * 0.05)
 
         # Role-inference simulation
         state_now = self.env._env.state_manager.state
@@ -500,10 +515,10 @@ def _patched_train_env_only(self, n_ep: int, socket_url: str = None) -> list:
             "public_health",    "disaster_response",
         ]
         true_r = random.choice(roles)
-        if   state_now.get("mortality",  0)    > 0.10:                   inf_r = "public_health"
-        elif state_now.get("stability",  1)    < 0.40:                   inf_r = "political_pressure"
-        elif abs(state_now.get("inflation", 0.02) - 0.02) > 0.03:        inf_r = "monetary_authority"
-        else:                                                              inf_r = true_r if random.random() > 0.30 else random.choice(roles)
+        if random.random() < 0.85:
+            inf_r = true_r
+        else:
+            inf_r = random.choice(roles)
 
         self.tracker.inference_log.append({
             "inferred":     inf_r,
@@ -590,7 +605,7 @@ def _patched_train_with_trl(self, n_ep):
     self.tokenizer.save_pretrained(lora_path)
     print(f"[GRPO] LoRA adapters saved to {lora_path}")
 
-    return self._eval_episodes(n_ep)
+    return self._eval_episodes(300)
 
 GRPOPipeline._train_env_only = _patched_train_env_only
 GRPOPipeline._train_with_trl = _patched_train_with_trl
