@@ -13,12 +13,14 @@ from importlib.machinery import ModuleSpec
 # 0-A  Silence WANDB spam before anything imports it
 # ══════════════════════════════════════════════════════════════════════════════
 os.environ.update({
-    "WANDB_DISABLED":         "true",
-    "WANDB_MODE":             "disabled",
-    "WANDB_SILENT":           "true",
     "TOKENIZERS_PARALLELISM": "false",
 })
 warnings.filterwarnings("ignore", message=".*WANDB_DISABLED.*")
+warnings.filterwarnings("ignore", message=".*torchao.*")
+
+import logging
+logging.getLogger("transformers.integrations").setLevel(logging.ERROR)
+logging.getLogger("transformers.training_args").setLevel(logging.ERROR)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 0-B  Generic dummy loader (shared by both meta-path finders below)
@@ -141,10 +143,10 @@ GRPO_CKPT_DIR = os.path.join(RUN_ROOT, "grpo_checkpoints")
 AUD_OUT_DIR   = os.path.join(RUN_ROOT, "auditor_outputs")
 LLM_OUT_DIR   = os.path.join(RUN_ROOT, "llm_outputs")
 
-# Episode counts (second script's larger values are used)
-GRPO_EPISODES             = 2000
-AUD_EPISODES_PER_SCENARIO = 20
-LLM_EPISODES              = 300
+# Episode counts (reduced for faster training)
+GRPO_EPISODES             = 50
+AUD_EPISODES_PER_SCENARIO = 5
+LLM_EPISODES              = 20
 
 SOCKET_PORT = 8001
 SOCKET_URL  = f"ws://127.0.0.1:{SOCKET_PORT}/agents"
@@ -542,7 +544,7 @@ def _patched_train_env_only(self, n_ep: int, socket_url: str = None) -> list:
         all_metrics.append(log)
         self.metrics_history.append(log)
 
-        if episode % 10 == 0:
+        if episode % 1 == 0:
             print(
                 f"Ep {episode:4d} | "
                 f"reward={ep_reward:6.2f} | "
@@ -605,7 +607,7 @@ def _patched_train_with_trl(self, n_ep):
     self.tokenizer.save_pretrained(lora_path)
     print(f"[GRPO] LoRA adapters saved to {lora_path}")
 
-    return self._eval_episodes(300)
+    return self._eval_episodes(10)
 
 GRPOPipeline._train_env_only = _patched_train_env_only
 GRPOPipeline._train_with_trl = _patched_train_with_trl
@@ -707,7 +709,7 @@ def _patched_run_generalization_test(
         print(f"  Evaluating on {scenario}...")
         results[scenario] = _patched_evaluate_scenario(
             scenario,
-            n_episodes=20,
+            n_episodes=5,
             lora_path=checkpoint_path,
         )
 
